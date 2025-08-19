@@ -12,3 +12,45 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
+
+use thiserror::Error;
+
+/// Represents errors that can occur during Hyperliquid HTTP operations.
+#[derive(Error, Debug)]
+pub enum HyperliquidHttpError {
+    /// Request failed with an error message
+    #[error("Request failed: {0}")]
+    RequestFailed(String),
+
+    /// Authentication failed
+    #[error("Authentication failed: {0}")]
+    AuthenticationFailed(String),
+
+    /// Rate limit exceeded
+    #[error("Rate limit exceeded: {0}")]
+    RateLimitExceeded(String),
+
+    /// Invalid instrument
+    #[error("Invalid instrument: {0}")]
+    InvalidInstrument(String),
+
+    /// Invalid parameter
+    #[error("Invalid parameter: {0}")]
+    InvalidParameter(String),
+
+    /// Connection error
+    #[error("Connection error: {0}")]
+    ConnectionError(String),
+
+    /// Parsing error
+    #[error("Parsing error: {0}")]
+    ParsingError(String),
+
+    /// Timeout error
+    #[error("Request timeout")]
+    Timeout,
+
+    /// Unknown error
+    #[error("Unknown error: {0}")]
+    Unknown(String),
+}

@@ -12,3 +12,53 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
+
+use thiserror::Error;
+
+/// Represents errors that can occur during Hyperliquid WebSocket operations.
+#[derive(Error, Debug)]
+pub enum HyperliquidWebSocketError {
+    /// Connection failed
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+
+    /// Not connected to WebSocket
+    #[error("Not connected to WebSocket")]
+    NotConnected,
+
+    /// Failed to send message
+    #[error("Failed to send message: {0}")]
+    SendError(String),
+
+    /// Failed to receive message
+    #[error("Failed to receive message: {0}")]
+    ReceiveError(String),
+
+    /// Serialization error
+    #[error("Serialization error: {0}")]
+    SerializationError(String),
+
+    /// Deserialization error
+    #[error("Deserialization error: {0}")]
+    DeserializationError(String),
+
+    /// Invalid subscription
+    #[error("Invalid subscription: {0}")]
+    InvalidSubscription(String),
+
+    /// Authentication error
+    #[error("Authentication error: {0}")]
+    AuthenticationError(String),
+
+    /// Rate limit error
+    #[error("Rate limit exceeded")]
+    RateLimitExceeded,
+
+    /// Connection timeout
+    #[error("Connection timeout")]
+    Timeout,
+
+    /// Unknown error
+    #[error("Unknown error: {0}")]
+    Unknown(String),
+}
