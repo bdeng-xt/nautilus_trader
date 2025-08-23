@@ -12,3 +12,44 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
+
+use serde::{Deserialize, Serialize};
+use strum::{Display, EnumString};
+
+/// Represents the WebSocket channels available on Hyperliquid.
+#[derive(Clone, Debug, Display, EnumString, Hash, PartialEq, Eq, Serialize, Deserialize)]
+pub enum HyperliquidWsChannel {
+    /// Level 2 order book data
+    #[serde(rename = "l2Book")]
+    #[strum(serialize = "l2Book")]
+    L2Book,
+    /// Trade data
+    #[serde(rename = "trades")]
+    #[strum(serialize = "trades")]
+    Trades,
+    /// All mids (mid prices)
+    #[serde(rename = "allMids")]
+    #[strum(serialize = "allMids")]
+    AllMids,
+    /// User notifications
+    #[serde(rename = "notification")]
+    #[strum(serialize = "notification")]
+    Notification,
+    /// User order updates
+    #[serde(rename = "orderUpdates")]
+    #[strum(serialize = "orderUpdates")]
+    OrderUpdates,
+    /// User-specific events
+    #[serde(rename = "userEvents")]
+    #[strum(serialize = "userEvents")]
+    UserEvents,
+}
+
+/// Represents WebSocket operations.
+#[derive(Clone, Debug, Display, EnumString, PartialEq, Eq, Serialize, Deserialize)]
+#[strum(serialize_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum WsOperation {
+    Subscribe,
+    Unsubscribe,
+}

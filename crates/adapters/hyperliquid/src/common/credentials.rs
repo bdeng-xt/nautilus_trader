@@ -12,3 +12,20 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+pub struct HyperliquidCredentials {
+    pub private_key: String,
+    pub wallet_address: Option<String>,
+    pub testnet: bool,
+}
+
+impl HyperliquidCredentials {
+    pub fn new(private_key: String, wallet_address: Option<String>, testnet: bool) -> Self {
+        Self {
+            private_key,
+            wallet_address,
+            testnet,
+        }
+    }
+}

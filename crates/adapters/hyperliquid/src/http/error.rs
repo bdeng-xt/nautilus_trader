@@ -12,3 +12,41 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
+
+use serde::{Deserialize, Serialize};
+use thiserror::Error;
+
+/// Represents errors that can occur with Hyperliquid HTTP requests.
+#[derive(Error, Debug, Clone)]
+pub enum HyperliquidHttpError {
+    #[error("Authentication required for this operation")]
+    AuthenticationRequired,
+    
+    #[error("Request failed: {0}")]
+    RequestFailed(String),
+    
+    #[error("Invalid response format: {0}")]
+    InvalidResponse(String),
+    
+    #[error("Rate limit exceeded")]
+    RateLimitExceeded,
+    
+    #[error("Network error: {0}")]
+    NetworkError(String),
+    
+    #[error("Parsing error: {0}")]
+    ParsingError(String),
+    
+    #[error("Server error: {0}")]
+    ServerError(String),
+    
+    #[error("Client error: {0}")]
+    ClientError(String),
+}
+
+/// Represents an error response body from Hyperliquid API.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HyperliquidErrorBody {
+    pub error: String,
+    pub message: Option<String>,
+}

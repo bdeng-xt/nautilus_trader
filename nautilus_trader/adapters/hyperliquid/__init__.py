@@ -23,13 +23,33 @@ subpackage's top level, so downstream code can simply import from
 ``nautilus_trader.adapters.hyperliquid``.
 
 """
+from nautilus_trader.adapters.hyperliquid.config import HyperliquidDataClientConfig
+from nautilus_trader.adapters.hyperliquid.config import HyperliquidExecClientConfig
 from nautilus_trader.adapters.hyperliquid.constants import HYPERLIQUID
 from nautilus_trader.adapters.hyperliquid.constants import HYPERLIQUID_CLIENT_ID
 from nautilus_trader.adapters.hyperliquid.constants import HYPERLIQUID_VENUE
+from nautilus_trader.adapters.hyperliquid.data import HyperliquidDataClient
+from nautilus_trader.adapters.hyperliquid.execution import HyperliquidExecutionClient
+from nautilus_trader.adapters.hyperliquid.factories import HyperliquidLiveDataClientFactory
+from nautilus_trader.adapters.hyperliquid.factories import HyperliquidLiveExecClientFactory
+from nautilus_trader.adapters.hyperliquid.factories import get_hyperliquid_http_client
+from nautilus_trader.adapters.hyperliquid.factories import get_hyperliquid_instrument_provider
+from nautilus_trader.adapters.hyperliquid.factories import get_hyperliquid_websocket_client
+from nautilus_trader.adapters.hyperliquid.providers import HyperliquidInstrumentProvider
 
 
 __all__ = [
     "HYPERLIQUID",
     "HYPERLIQUID_CLIENT_ID",
     "HYPERLIQUID_VENUE",
+    "HyperliquidDataClientConfig",
+    "HyperliquidExecClientConfig",
+    "HyperliquidDataClient",
+    "HyperliquidExecutionClient",
+    "HyperliquidInstrumentProvider",
+    "HyperliquidLiveDataClientFactory",
+    "HyperliquidLiveExecClientFactory",
+    "get_hyperliquid_http_client",
+    "get_hyperliquid_instrument_provider",
+    "get_hyperliquid_websocket_client",
 ]

@@ -12,3 +12,36 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
+
+use thiserror::Error;
+
+/// Represents errors that can occur with Hyperliquid WebSocket operations.
+#[derive(Error, Debug, Clone)]
+pub enum HyperliquidWsError {
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+    
+    #[error("Authentication required for this operation")]
+    AuthenticationRequired,
+    
+    #[error("Failed to serialize message: {0}")]
+    SerializationError(String),
+    
+    #[error("Failed to deserialize message: {0}")]
+    DeserializationError(String),
+    
+    #[error("Failed to send message: {0}")]
+    SendError(String),
+    
+    #[error("Channel error: {0}")]
+    ChannelError(String),
+    
+    #[error("Subscription error: {0}")]
+    SubscriptionError(String),
+    
+    #[error("Protocol error: {0}")]
+    ProtocolError(String),
+    
+    #[error("Unexpected message type: {0}")]
+    UnexpectedMessageType(String),
+}

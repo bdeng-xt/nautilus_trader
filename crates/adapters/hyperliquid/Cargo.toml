@@ -45,6 +45,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 nautilus-common = { workspace = true }
 nautilus-core = { workspace = true }
+nautilus-cryptography = { workspace = true }
 nautilus-execution = { workspace = true }
 nautilus-model = { workspace = true }
 nautilus-network = { workspace = true }
@@ -77,6 +78,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }  # Needed for example binaries
 ustr = { workspace = true }
 uuid = { workspace = true }
+hyperliquid_rust_sdk = "0.6.0"
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
 
 [dev-dependencies]
 nautilus-testkit = { workspace = true }

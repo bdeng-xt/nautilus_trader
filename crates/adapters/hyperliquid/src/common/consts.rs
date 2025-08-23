@@ -21,3 +21,6 @@ use ustr::Ustr;
 pub const HYPERLIQUID: &str = "HYPERLIQUID";
 pub static HYPERLIQUID_VENUE: LazyLock<Venue> =
     LazyLock::new(|| Venue::new(Ustr::from(HYPERLIQUID)));
+
+pub const HYPERLIQUID_MAINNET_BASE_URL: &str = "https://api.hyperliquid.xyz";
+pub const HYPERLIQUID_TESTNET_BASE_URL: &str = "https://api.hyperliquid-testnet.xyz";
