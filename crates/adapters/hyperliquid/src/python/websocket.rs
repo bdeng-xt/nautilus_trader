@@ -16,6 +16,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::runtime::Runtime;
 use nautilus_core::python::to_pyvalue_err;
+use nautilus_model::python::data::data_to_pycapsule;
 use pyo3::prelude::*;
 
 use crate::{
@@ -165,4 +166,85 @@ impl HyperliquidWebSocketClient {
             None => Ok("".to_string()),
         }
     }
+
+    /// Parse a message and convert to Nautilus data objects for callback-based handling.
+    #[pyo3(name = "parse_message")]
+    pub fn py_parse_message(&self, py: Python, message_json: String) -> PyResult<Option<PyObject>> {
+        if let Ok(message) = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&message_json) {
+            Ok(parse_hyperliquid_message(py, message))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+// Helper function for backward compatibility with sync runtime
+fn get_runtime_sync() -> PyResult<Arc<Mutex<Runtime>>> {
+    let runtime = GLOBAL_RUNTIME
+        .get_or_init(|| {
+            Runtime::new()
+                .map(|rt| Arc::new(Mutex::new(rt)))
+                .unwrap_or_else(|_| panic!("Failed to create Tokio runtime"))
+        })
+        .clone();
+    Ok(runtime)
+}
+
+// Helper function to call Python callback
+pub fn call_python(py: Python, callback: &PyObject, py_obj: PyObject) {
+    if let Err(e) = callback.call1(py, (py_obj,)) {
+        eprintln!("Error calling Python callback: {e}");
+    }
+}
+
+// Parse Hyperliquid WebSocket message and convert to Nautilus data objects
+fn parse_hyperliquid_message(py: Python, message: serde_json::Map<String, serde_json::Value>) -> Option<PyObject> {
+    use nautilus_model::data::QuoteTick;
+    use nautilus_model::identifiers::{InstrumentId, Symbol, Venue};
+    use nautilus_model::types::{Price, Quantity};
+    
+    let channel = message.get("channel")?.as_str()?;
+    
+    match channel {
+        "allMids" => {
+            let data = message.get("data")?.as_object()?;
+            let mids = data.get("mids")?.as_object()?;
+            
+            // Process first symbol for demonstration (BTC)
+            if let Some(btc_price) = mids.get("BTC").and_then(|v| v.as_str()) {
+                if let Ok(price) = btc_price.parse::<f64>() {
+                    // Create QuoteTick
+                    let instrument_id = InstrumentId::new(
+                        Symbol::new("BTC-PERP"),
+                        Venue::new("HYPERLIQUID")
+                    );
+                    
+                    let price_val = Price::new(price, 1);
+                    let zero_qty = Quantity::new(0.0, 0);
+                    let ts_init = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos() as u64;
+                    
+                    let quote_tick = QuoteTick::new(
+                        instrument_id,
+                        price_val, // bid_price
+                        price_val, // ask_price  
+                        zero_qty,  // bid_size
+                        zero_qty,  // ask_size
+                        ts_init.into(),
+                        ts_init.into(),
+                    );
+                    
+                    // Convert to PyObject using capsule
+                    return Some(data_to_pycapsule(py, quote_tick.into()));
+                }
+            }
+        }
+        _ => {
+            // Handle other channels later
+        }
+    }
+    
+    None
 }

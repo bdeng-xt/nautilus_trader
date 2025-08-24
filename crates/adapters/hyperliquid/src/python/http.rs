@@ -63,7 +63,7 @@ impl HyperliquidHttpClient {
 
     /// Get all available instruments.
     #[pyo3(name = "get_instruments")]
-    pub fn py_get_instruments<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
+    pub fn py_get_instruments(&self) -> PyResult<String> {
         let credentials = self.credentials().clone();
         
         // Use blocking call for simplicity
@@ -73,13 +73,8 @@ impl HyperliquidHttpClient {
             client.get_instruments().await
         }).map_err(to_pyvalue_err)?;
 
-        let py_list = PyList::empty(py);
-        for instrument in response {
-            let dict = to_dict_pyo3(py, &instrument)?;
-            py_list.append(dict)?;
-        }
-
-        Ok(py_list)
+        // Convert to JSON string as expected by the Python provider
+        serde_json::to_string(&response).map_err(to_pyvalue_err)
     }
 
     /// Get user state (balances, positions, etc).

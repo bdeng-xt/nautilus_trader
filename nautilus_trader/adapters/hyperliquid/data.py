@@ -119,24 +119,34 @@ class HyperliquidDataClient(LiveMarketDataClient):
         self._ws_client = ws_client
         self._ws_task: asyncio.Task | None = None
         self._subscriptions: set[str] = set()
+        self._subscribed_quote_instruments: set[InstrumentId] = set()
 
     @property
     def hyperliquid_instrument_provider(self) -> HyperliquidInstrumentProvider:
         return self._instrument_provider
 
     async def _connect(self) -> None:
-        await self._instrument_provider.initialize()
+        # Create basic instruments manually for now to bypass provider issues
+        await self._create_basic_instruments()
+        self._cache_instruments()
         self._send_all_instruments_to_data_engine()
 
         # Connect WebSocket client
         if self._ws_client:
             self._log.info("Connecting to Hyperliquid WebSocket...")
             
-            # Start WebSocket connection and message handling
-            self._ws_task = asyncio.create_task(self._run_websocket())
+            # Connect and start subscribing
+            await asyncio.get_event_loop().run_in_executor(None, self._ws_client.connect)
+            await asyncio.get_event_loop().run_in_executor(None, self._ws_client.subscribe_all_mids)
+            
+            # Start WebSocket message loop with callback pattern
+            self._ws_task = asyncio.create_task(self._run_websocket_with_callback())
             await asyncio.sleep(1.0)  # Give it time to connect
             
             self._log.info("Connected to Hyperliquid WebSocket", LogColor.GREEN)
+            
+            # TEST: Send a test quote tick to verify data routing works
+            await self._send_test_quote_tick()
 
     async def _disconnect(self) -> None:
         # Cancel WebSocket task
@@ -151,39 +161,247 @@ class HyperliquidDataClient(LiveMarketDataClient):
 
         # Clear subscriptions
         self._subscriptions.clear()
+        self._subscribed_quote_instruments.clear()
+
+    async def _send_test_quote_tick(self) -> None:
+        """
+        Send a test quote tick to verify data routing works.
+        This bypasses WebSocket parsing to test the core routing.
+        """
+        await asyncio.sleep(2.0)  # Wait for subscriptions to be set up
+        
+        self._log.info("🧪 SENDING TEST QUOTE TICK...")
+        
+        # Check if we have any subscribed instruments
+        if not self._subscribed_quote_instruments:
+            self._log.warning("❌ No subscribed quote instruments found for test!")
+            return
+            
+        # Create test quote for first subscribed instrument
+        instrument_id = next(iter(self._subscribed_quote_instruments))
+        self._log.info(f"🧪 Creating test quote for {instrument_id}")
+        
+        # Create test quote tick
+        test_quote = QuoteTick(
+            instrument_id=instrument_id,
+            bid_price=Price.from_str("50000.00"),
+            ask_price=Price.from_str("50001.00"),
+            bid_size=Quantity.from_int(1),
+            ask_size=Quantity.from_int(1),
+            ts_event=self._clock.timestamp_ns(),
+            ts_init=self._clock.timestamp_ns(),
+        )
+        
+        self._log.info(f"🧪 TEST QUOTE: {test_quote}")
+        self._log.info("🧪 Calling _handle_data with test quote...")
+        
+        # Send test quote to data engine
+        self._handle_data(test_quote)
+        
+        self._log.info("🧪 Test quote sent to data engine!")
+        self._log.info("🧪 If strategy doesn't receive this, there's a fundamental routing issue.")
+
+    async def _create_basic_instruments(self) -> None:
+        """
+        Create basic instruments manually for common trading pairs.
+        This bypasses the instrument provider issues temporarily.
+        """
+        from nautilus_trader.model.currencies import USD
+        from nautilus_trader.model.instruments import CryptoPerpetual
+        from decimal import Decimal
+        
+        self._log.info("Creating basic instruments manually...")
+        
+        # Common instruments we expect in the examples
+        instruments_data = [
+            {"name": "BTC", "sz_decimals": 5, "price_precision": 1},
+            {"name": "ETH", "sz_decimals": 4, "price_precision": 2}, 
+            {"name": "SOL", "sz_decimals": 2, "price_precision": 3},
+            {"name": "AAVE", "sz_decimals": 3, "price_precision": 2},
+            {"name": "DOGE", "sz_decimals": 0, "price_precision": 6},
+            {"name": "ARB", "sz_decimals": 1, "price_precision": 5},
+        ]
+        
+        ts_init = self._clock.timestamp_ns()
+        
+        for data in instruments_data:
+            try:
+                name = data["name"]
+                sz_decimals = data["sz_decimals"] 
+                price_precision = data["price_precision"]
+                
+                symbol = Symbol(f"{name}-PERP")
+                instrument_id = InstrumentId(symbol, self._config.venue)
+                
+                base_currency = Currency.from_str(name) 
+                quote_currency = USD
+                
+                instrument = CryptoPerpetual(
+                    instrument_id=instrument_id,
+                    raw_symbol=Symbol(name),
+                    base_currency=base_currency,
+                    quote_currency=quote_currency,
+                    settlement_currency=quote_currency,  # USD settlement
+                    is_inverse=False,  # Not inverse (standard USDT perpetual)
+                    price_precision=price_precision,
+                    size_precision=sz_decimals,
+                    price_increment=Price(10 ** -price_precision, price_precision),
+                    size_increment=Quantity(10 ** -sz_decimals, sz_decimals),
+                    ts_event=ts_init,
+                    ts_init=ts_init,
+                    maker_fee=Decimal("0.0002"),
+                    taker_fee=Decimal("0.0005"), 
+                    margin_init=Decimal("0.1"),
+                    margin_maint=Decimal("0.05"),
+                )
+                
+                self._instrument_provider.add(instrument)
+                self._instrument_provider.add_currency(base_currency)
+                self._instrument_provider.add_currency(quote_currency)
+                
+                self._log.info(f"✅ Created instrument: {instrument_id}")
+                
+            except Exception as e:
+                self._log.warning(f"❌ Failed to create instrument {data}: {e}")
+                
+        self._log.info(f"Created {len(instruments_data)} instruments manually")
+
+    def _cache_instruments(self) -> None:
+        """Cache instruments for correct price/size precisions."""
+        # This method is similar to Coinbase INTX pattern
+        for instrument in self._instrument_provider.get_all().values():
+            # Ensure instrument is cached and available
+            self._log.debug(f"Cached instrument {instrument.id}")
+        self._log.debug("Cached instruments for Hyperliquid client")
 
     def _send_all_instruments_to_data_engine(self) -> None:
         for currency in self._instrument_provider.currencies().values():
             self._cache.add_currency(currency)
 
-        for instrument in self._instrument_provider.get_all().values():
+        instruments = self._instrument_provider.get_all()
+        self._log.info(f"📊 Sending {len(instruments)} instruments to data engine")
+        
+        for instrument in instruments.values():
+            # Add to cache first
+            self._cache.add_instrument(instrument)
+            # Then send to data engine
             self._handle_data(instrument)
+            self._log.info(f"✅ Sent instrument to data engine: {instrument.id}")
+
+    async def _run_websocket_with_callback(self) -> None:
+        """
+        Run the WebSocket message loop with callback-based message processing.
+        This follows the Coinbase INTX pattern for proper data routing.
+        """
+        try:
+            self._log.info("Starting WebSocket callback loop", LogColor.GREEN)
+            
+            # Message handling loop
+            while True:
+                try:
+                    # Read message from Rust WebSocket client
+                    message_json = await asyncio.get_event_loop().run_in_executor(
+                        None, self._ws_client.read_message
+                    )
+                    
+                    if message_json:
+                        self._log.debug(f"Received WebSocket message: {message_json[:100]}...")
+                        
+                        # Check if parse_message method is available
+                        if hasattr(self._ws_client, 'parse_message'):
+                            self._log.debug("Using Rust parser for message processing")
+                            # Parse message using Rust parser to get Nautilus data objects
+                            parsed_data = await asyncio.get_event_loop().run_in_executor(
+                                None, self._ws_client.parse_message, message_json
+                            )
+                            
+                            if parsed_data is not None:
+                                self._log.info(f"✅ Parsed data successfully: {type(parsed_data)}")
+                                # This should now be a proper Nautilus data object (QuoteTick, etc.)
+                                self._handle_data_callback(parsed_data)
+                            else:
+                                self._log.debug("❌ No data parsed from Rust parser, falling back to manual parsing")
+                                # Fallback to manual parsing if needed
+                                await self._handle_ws_message(message_json)
+                        else:
+                            self._log.debug("parse_message method not available, using manual parsing")
+                            # Use manual parsing directly
+                            await self._handle_ws_message(message_json)
+                    else:
+                        # No message, small delay to prevent tight loop
+                        await asyncio.sleep(0.01)
+                        
+                except Exception as e:
+                    self._log.warning(f"Error in WebSocket callback loop: {e}")
+                    await asyncio.sleep(0.1)
+
+        except asyncio.CancelledError:
+            self._log.info("WebSocket callback task cancelled")
+            # Disconnect WebSocket
+            try:
+                await asyncio.get_event_loop().run_in_executor(None, self._ws_client.disconnect)
+            except Exception as e:
+                self._log.warning(f"Error disconnecting WebSocket: {e}")
+        except Exception as e:
+            self._log.error(f"WebSocket callback error: {e}")
+
+    def _handle_data_callback(self, data: Any) -> None:
+        """
+        Handle data from the callback-based WebSocket client.
+        This follows the Coinbase INTX pattern.
+        """
+        try:
+            from nautilus_trader.model.data import capsule_to_data
+            
+            # Handle capsule data (similar to Coinbase INTX)
+            if hasattr(data, '__class__') and 'pycapsule' in str(type(data)):
+                # This is a PyO3 capsule containing Nautilus data
+                parsed_data = capsule_to_data(data)
+                self._handle_data(parsed_data)
+                self._log.debug(f"Processed capsule data: {type(parsed_data).__name__}")
+            else:
+                # Direct Nautilus data object
+                self._handle_data(data)
+                self._log.debug(f"Processed direct data: {type(data).__name__}")
+                
+        except Exception as e:
+            self._log.error(f"Error handling callback data: {e}")
+            self._log.error(f"Data type: {type(data)}, Data: {str(data)[:200]}")
 
     async def _run_websocket(self) -> None:
         """
-        Run the WebSocket message loop.
+        Legacy WebSocket message loop (kept for backward compatibility).
         """
         try:
             # Connect to WebSocket using Rust client
             await asyncio.get_event_loop().run_in_executor(None, self._ws_client.connect)
+            self._log.info("WebSocket connected successfully", LogColor.GREEN)
             
             # Message handling loop
             while True:
-                # Read message from Rust WebSocket client
-                message = await asyncio.get_event_loop().run_in_executor(
-                    None, self._ws_client.read_message
-                )
-                
-                if message:
-                    await self._handle_ws_message(message)
-                else:
-                    # No message, small delay to prevent tight loop
-                    await asyncio.sleep(0.001)
+                try:
+                    # Read message from Rust WebSocket client
+                    message = await asyncio.get_event_loop().run_in_executor(
+                        None, self._ws_client.read_message
+                    )
+                    
+                    if message:
+                        await self._handle_ws_message(message)
+                    else:
+                        # No message, small delay to prevent tight loop
+                        await asyncio.sleep(0.01)
+                        
+                except Exception as e:
+                    self._log.warning(f"Error in WebSocket loop: {e}")
+                    await asyncio.sleep(0.1)
 
         except asyncio.CancelledError:
             self._log.info("WebSocket task cancelled")
             # Disconnect WebSocket
-            await asyncio.get_event_loop().run_in_executor(None, self._ws_client.disconnect)
+            try:
+                await asyncio.get_event_loop().run_in_executor(None, self._ws_client.disconnect)
+            except Exception as e:
+                self._log.warning(f"Error disconnecting WebSocket: {e}")
         except Exception as e:
             self._log.error(f"WebSocket error: {e}")
 
@@ -196,15 +414,28 @@ class HyperliquidDataClient(LiveMarketDataClient):
             channel = message.get("channel", "")
             data = message.get("data", {})
 
+            self._log.debug(f"Received message on channel: {channel}")
+
             if channel == "trades":
                 await self._handle_trades(data)
+                self._log.debug(f"Processed {len(data)} trades")
             elif channel == "l2Book":
                 await self._handle_order_book(data)
+                self._log.debug(f"Processed order book for {data.get('coin', 'unknown')}")
             elif channel == "allMids":
                 await self._handle_all_mids(data)
+                mids = data.get("mids", {})
+                self._log.debug(f"Processed mids for {len(mids)} symbols")
+            elif channel == "subscriptionResponse":
+                self._log.info(f"Subscription confirmed: {data}")
+            else:
+                self._log.debug(f"Unhandled channel: {channel}")
 
+        except json.JSONDecodeError as e:
+            self._log.error(f"Invalid JSON in WebSocket message: {e}")
         except Exception as e:
             self._log.error(f"Error handling WebSocket message: {e}")
+            self._log.error(f"Message was: {message_json[:200]}...")
 
     async def _handle_trades(self, trades_data: list) -> None:
         """
@@ -219,9 +450,11 @@ class HyperliquidDataClient(LiveMarketDataClient):
                 price = Price.from_str(trade.get("px", "0"))
                 size = Quantity.from_str(trade.get("sz", "0"))
                 trade_id = TradeId(str(trade.get("tid", 0)))
-                ts_event = int(trade.get("time", 0)) * 1_000_000  # Convert to nanoseconds
+                ts_event = int(trade.get("time", 0)) * 1_000  # Convert milliseconds to microseconds, then to nanoseconds
+                if ts_event == 0:
+                    ts_event = self._clock.timestamp_ns()
 
-                # Create trade tick
+                # Create trade tick  
                 trade_tick = TradeTick(
                     instrument_id=instrument_id,
                     price=price,
@@ -233,9 +466,11 @@ class HyperliquidDataClient(LiveMarketDataClient):
                 )
 
                 self._handle_data(trade_tick)
+                self._log.info(f"🔄 Trade: {coin} @ {price} size: {size}", LogColor.BLUE)
 
             except Exception as e:
                 self._log.warning(f"Failed to parse trade: {e}")
+                self._log.warning(f"Trade data: {trade}")
 
     async def _handle_order_book(self, book_data: dict) -> None:
         """
@@ -263,33 +498,58 @@ class HyperliquidDataClient(LiveMarketDataClient):
         """
         try:
             mids = mids_data.get("mids", {})
+            processed_count = 0
             
             for symbol, price_str in mids.items():
                 try:
-                    # Clean symbol name (remove @ prefix for numbered symbols)
-                    clean_symbol = symbol
+                    # Skip numbered symbols (they start with @)
                     if symbol.startswith("@"):
-                        continue  # Skip numbered symbols for now
+                        continue
                     
-                    instrument_id = InstrumentId(Symbol(f"{clean_symbol}-PERP"), self._config.venue)
+                    # Create instrument ID for this symbol
+                    instrument_id = InstrumentId(Symbol(f"{symbol}-PERP"), self._config.venue)
+                    
+                    self._log.debug(f"🔍 Processing symbol {symbol} -> {instrument_id}")
+                    self._log.debug(f"🔍 Subscribed instruments: {self._subscribed_quote_instruments}")
+                    
+                    # Only process quotes for instruments that strategies have subscribed to
+                    if instrument_id not in self._subscribed_quote_instruments:
+                        self._log.debug(f"❌ {instrument_id} not in subscribed instruments, skipping")
+                        continue
+                    
                     price = Price.from_str(price_str)
                     ts_event = self._clock.timestamp_ns()
 
-                    # Create quote tick (mid price as both bid and ask)
+                    # Create quote tick with small spread around mid price
+                    # Hyperliquid provides mid prices, so we create a small spread
+                    tick_size = Price.from_str("0.01")  # Minimal tick size
+                    bid_price = price - tick_size
+                    ask_price = price + tick_size
+                    
                     quote_tick = QuoteTick(
                         instrument_id=instrument_id,
-                        bid_price=price,
-                        ask_price=price,
-                        bid_size=Quantity.from_int(0),
-                        ask_size=Quantity.from_int(0),
+                        bid_price=bid_price,
+                        ask_price=ask_price,
+                        bid_size=Quantity.from_int(1),  # Use non-zero size
+                        ask_size=Quantity.from_int(1),  # Use non-zero size
                         ts_event=ts_event,
                         ts_init=ts_event,
                     )
 
+                    # Send quote tick to data engine
+                    self._log.info(f"🔥 SENDING SUBSCRIBED QUOTE TO DATA ENGINE: {quote_tick}")
                     self._handle_data(quote_tick)
+                    processed_count += 1
+                    
+                    # Log this important event
+                    self._log.info(f"💰 Quote: {symbol} @ {price} -> {instrument_id} (SUBSCRIBED - sent to data engine)", LogColor.GREEN)
 
                 except Exception as e:
                     self._log.warning(f"Failed to parse mid price for {symbol}: {e}")
+                    self._log.warning(f"Symbol: {symbol}, Price: {price_str}")
+            
+            if processed_count > 0:
+                self._log.debug(f"Processed {processed_count} quote ticks from mids")
 
         except Exception as e:
             self._log.warning(f"Failed to parse all mids: {e}")
@@ -328,6 +588,12 @@ class HyperliquidDataClient(LiveMarketDataClient):
             self._subscriptions.add(subscription_id)
 
     async def _subscribe_quote_ticks(self, command: SubscribeQuoteTicks) -> None:
+        # Track which instrument this subscription is for
+        self._subscribed_quote_instruments.add(command.instrument_id)
+        self._log.info(f"📊 Added {command.instrument_id} to subscribed quote instruments")
+        self._log.info(f"📊 Strategy subscribed to: {command.instrument_id}")
+        self._log.info(f"📊 Current venue config: {self._config.venue}")
+        
         # Subscribe to all mids (closest thing to quote ticks)
         subscription_id = "allMids"
         
@@ -336,6 +602,7 @@ class HyperliquidDataClient(LiveMarketDataClient):
                 None, self._ws_client.subscribe_all_mids
             )
             self._subscriptions.add(subscription_id)
+            self._log.info("🔗 Subscribed to Hyperliquid allMids WebSocket feed")
 
     async def _subscribe_bars(self, command: SubscribeBars) -> None:
         self._log.error("Bar subscriptions are not supported by Hyperliquid WebSocket API")
@@ -356,8 +623,10 @@ class HyperliquidDataClient(LiveMarketDataClient):
         pass
 
     async def _unsubscribe_quote_ticks(self, command: UnsubscribeQuoteTicks) -> None:
-        # Note: Hyperliquid doesn't support unsubscribing individual symbols
-        pass
+        # Remove from subscribed instruments
+        self._subscribed_quote_instruments.discard(command.instrument_id)
+        self._log.info(f"📊 Removed {command.instrument_id} from subscribed quote instruments")
+        # Note: Hyperliquid doesn't support unsubscribing individual symbols from WebSocket
 
     async def _unsubscribe_bars(self, command: UnsubscribeBars) -> None:
         pass

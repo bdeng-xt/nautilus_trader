@@ -152,7 +152,19 @@ class HyperliquidInstrumentProvider(InstrumentProvider):
         Synchronous wrapper for getting instruments (to be called in executor).
         """
         # This will call the Rust client synchronously
-        return self._client.get_instruments()
+        result = self._client.get_instruments()
+        
+        # Handle different return types (list vs string)
+        if isinstance(result, str):
+            return result
+        elif isinstance(result, list):
+            # Convert list to JSON string
+            import json
+            return json.dumps(result)
+        else:
+            # Fallback: just stringify it
+            import json
+            return json.dumps(result)
 
     def _parse_instrument(self, data: dict, ts_init: int) -> CryptoPerpetual | None:
         """
