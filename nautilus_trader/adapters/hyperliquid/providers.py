@@ -89,7 +89,7 @@ class HyperliquidInstrumentProvider(InstrumentProvider):
         self._instruments_pyo3 = all_pyo3_instruments
 
         # Convert to Nautilus instruments and add to internal collection
-        nautilus_instruments = instruments_from_pyo3(all_pyo3_instruments, log_warnings=self._log_warnings)
+        nautilus_instruments = instruments_from_pyo3(all_pyo3_instruments)
         for instrument in nautilus_instruments:
             self.add(instrument)
 

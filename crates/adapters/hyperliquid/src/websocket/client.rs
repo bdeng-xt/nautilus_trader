@@ -80,11 +80,32 @@ impl HyperliquidWebSocketClient {
 
     /// Send a message to the WebSocket.
     fn send_message(&self, message: Message) -> Result<()> {
+        let is_connected = *self.is_connected.lock().unwrap();
+        if !is_connected {
+            eprintln!("WebSocket send_message: Connection not established");
+            anyhow::bail!("WebSocket connection not established");
+        }
+        
+        let has_handler = self.message_handler.is_some();
+        if !has_handler {
+            eprintln!("WebSocket send_message: Message handler not set");
+            anyhow::bail!("Message handler not set");
+        }
+        
         if let Some(sender) = self.message_sender.lock().unwrap().as_ref() {
-            sender.send(message)?;
+            eprintln!("WebSocket send_message: Sending message through channel");
+            sender.send(message).map_err(|e| {
+                eprintln!("WebSocket send_message: Channel send failed: {e}");
+                // Connection was lost, update state
+                *self.is_connected.lock().unwrap() = false;
+                *self.message_sender.lock().unwrap() = None;
+                anyhow::anyhow!("channel closed: {e}")
+            })?;
+            eprintln!("WebSocket send_message: Message sent successfully");
             Ok(())
         } else {
-            anyhow::bail!("WebSocket not connected")
+            eprintln!("WebSocket send_message: Message channel not available");
+            anyhow::bail!("Message channel not available")
         }
     }
 
@@ -123,22 +144,40 @@ impl HyperliquidWebSocketClient {
 
     /// Try to connect once.
     async fn try_connect(&mut self) -> Result<()> {
+        // Initialize TLS crypto provider if not already set
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        
+        // Check if message handler is set
+        if self.message_handler.is_none() {
+            anyhow::bail!("Message handler must be set before connecting");
+        }
+        
         let (ws_stream, _) = connect_async(&self.url).await?;
-        *self.is_connected.lock().unwrap() = true;
-        *self.last_heartbeat.lock().unwrap() = Some(Instant::now());
-
+        eprintln!("WebSocket connected successfully to {}", &self.url);
+        
         // Create message channel
         let (tx, rx) = mpsc::unbounded_channel();
         *self.message_sender.lock().unwrap() = Some(tx);
+        eprintln!("Message channel created");
+
+        // Update connection state
+        *self.is_connected.lock().unwrap() = true;
+        *self.last_heartbeat.lock().unwrap() = Some(Instant::now());
 
         // Spawn message handling task
         if let Some(handler) = self.message_handler.clone() {
             let is_connected = self.is_connected.clone();
             let last_heartbeat = self.last_heartbeat.clone();
+            let message_sender = self.message_sender.clone();
             
             tokio::spawn(async move {
-                Self::handle_messages(ws_stream, handler, is_connected, last_heartbeat, rx).await;
+                eprintln!("Starting message handling task");
+                Self::handle_messages(ws_stream, handler, is_connected, last_heartbeat, message_sender, rx).await;
+                eprintln!("Message handling task completed");
             });
+            
+            // Give the task time to initialize
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
         // Re-subscribe to all active subscriptions
@@ -182,6 +221,7 @@ impl HyperliquidWebSocketClient {
         handler: MessageHandler,
         is_connected: Arc<Mutex<bool>>,
         last_heartbeat: Arc<Mutex<Option<Instant>>>,
+        message_sender: Arc<Mutex<Option<mpsc::UnboundedSender<Message>>>>,
         mut message_receiver: mpsc::UnboundedReceiver<Message>,
     ) {
         let (mut write, mut read) = ws_stream.split();
@@ -261,7 +301,10 @@ impl HyperliquidWebSocketClient {
             }
         }
 
+        // Clean up connection state
+        eprintln!("Cleaning up WebSocket connection");
         *is_connected.lock().unwrap() = false;
+        *message_sender.lock().unwrap() = None;
     }
 
     /// Subscribe to all market mid prices.
@@ -396,7 +439,11 @@ impl HyperliquidWebSocketClient {
 
     /// Check if connected.
     pub fn is_connected(&self) -> bool {
-        *self.is_connected.lock().unwrap()
+        let is_connected = *self.is_connected.lock().unwrap();
+        let has_sender = self.message_sender.lock().unwrap().is_some();
+        let has_handler = self.message_handler.is_some();
+        
+        is_connected && has_sender && has_handler
     }
 
     /// Get reconnection attempts count.

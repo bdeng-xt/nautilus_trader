@@ -30,7 +30,11 @@ from nautilus_trader.common.component import LiveClock
 from nautilus_trader.common.component import MessageBus
 from nautilus_trader.common.enums import LogColor
 from nautilus_trader.core import nautilus_pyo3
-from nautilus_trader.data.messages import DataRequest
+from nautilus_trader.data.messages import RequestBars
+from nautilus_trader.data.messages import RequestInstrument
+from nautilus_trader.data.messages import RequestInstruments
+from nautilus_trader.data.messages import RequestQuoteTicks
+from nautilus_trader.data.messages import RequestTradeTicks
 from nautilus_trader.data.messages import SubscribeBars
 from nautilus_trader.data.messages import SubscribeInstrument
 from nautilus_trader.data.messages import SubscribeInstruments
@@ -127,11 +131,20 @@ class HyperliquidDataClient(LiveMarketDataClient):
         # Send instruments to data engine
         self._send_all_instruments_to_data_engine()
 
-        # Connect WebSocket
+        # Setup WebSocket message handler and connect
         if self._ws_client:
+            self._log.info("Setting up Hyperliquid WebSocket message handler...")
+            self._ws_client.set_message_handler(self._on_ws_message)
+            
             self._log.info("Connecting to Hyperliquid WebSocket...")
             await self._ws_client.connect()
-            self._log.info("Connected to Hyperliquid WebSocket", LogColor.GREEN)
+            
+            # Verify connection
+            if self._ws_client.is_connected():
+                self._log.info("Connected to Hyperliquid WebSocket", LogColor.GREEN)
+            else:
+                self._log.error("Failed to establish WebSocket connection")
+                raise RuntimeError("WebSocket connection failed")
 
     async def _disconnect(self) -> None:
         # Disconnect WebSocket
@@ -142,6 +155,156 @@ class HyperliquidDataClient(LiveMarketDataClient):
 
         # Clear subscriptions
         self._subscribed_instruments.clear()
+
+    def _on_ws_message(self, message: str) -> None:
+        """Handle incoming WebSocket message."""
+        try:
+            import json
+            data = json.loads(message)
+            self._log.debug(f"Received WebSocket message: {data}")
+            
+            # Parse different message types
+            if isinstance(data, dict):
+                # Check for different Hyperliquid message types
+                if "channel" in data:
+                    channel = data["channel"]
+                    if channel == "allMids":
+                        self._handle_all_mids(data.get("data", {}))
+                    elif channel == "l2Book":
+                        self._handle_l2_book(data.get("data", {}))
+                    elif channel == "trades":
+                        self._handle_trades(data.get("data", {}))
+                elif "mids" in data:
+                    # Direct allMids data format
+                    self._handle_all_mids(data)
+                elif "type" in data:
+                    # Handle subscription responses or other message types
+                    msg_type = data["type"]
+                    self._log.debug(f"Received message type: {msg_type}")
+                else:
+                    # Handle direct data updates (common format)
+                    self._handle_generic_data(data)
+            
+        except Exception as e:
+            self._log.error(f"Error processing WebSocket message: {e}")
+
+    def _handle_all_mids(self, data: dict) -> None:
+        """Handle allMids price data and convert to quote ticks."""
+        try:
+            from nautilus_trader.model.data import QuoteTick
+            from nautilus_trader.model.objects import Price, Quantity
+            
+            self._log.debug(f"📊 Received allMids data with {len(data)} items")
+            
+            if "mids" in data:
+                mids = data["mids"]
+                # mids is a dictionary like {'BTC': '98234.0', 'ETH': '3456.7', ...}
+                if isinstance(mids, dict):
+                    for coin, price_str in mids.items():
+                        # Create instrument ID (handle special cases)
+                        if coin.startswith('k'):
+                            # Handle kBONK, kPEPE, etc. - remove 'k' prefix
+                            base_coin = coin[1:]
+                            instrument_id = InstrumentId.from_str(f"{base_coin}-PERP.HYPERLIQUID")
+                        elif '/' in coin:
+                            # Handle PURR/USDC type - use first part
+                            base_coin = coin.split('/')[0]
+                            instrument_id = InstrumentId.from_str(f"{base_coin}-PERP.HYPERLIQUID")
+                        else:
+                            instrument_id = InstrumentId.from_str(f"{coin}-PERP.HYPERLIQUID")
+                        
+                        # Check if we're subscribed to this instrument
+                        if instrument_id in self._subscribed_instruments:
+                            try:
+                                price = Price.from_str(price_str)
+                                
+                                # Create a quote tick with bid=ask=mid price
+                                quote_tick = QuoteTick(
+                                    instrument_id=instrument_id,
+                                    bid_price=price,
+                                    ask_price=price, 
+                                    bid_size=Quantity.from_int(0),  # Size not available in allMids
+                                    ask_size=Quantity.from_int(0),
+                                    ts_event=self._clock.timestamp_ns(),
+                                    ts_init=self._clock.timestamp_ns(),
+                                )
+                                
+                                self._handle_data(quote_tick)
+                                self._log.info(f"💰 Quote tick: {instrument_id} | Price: {price}")
+                                
+                            except Exception as e:
+                                self._log.error(f"Error creating quote tick for {coin}: {e}")
+            
+        except Exception as e:
+            self._log.error(f"Error handling allMids data: {e}")
+
+    def _handle_l2_book(self, data: dict) -> None:
+        """Handle L2 book data."""
+        try:
+            self._log.info(f"📚 Received L2 book data: {data}")
+            # TODO: Implement order book processing
+        except Exception as e:
+            self._log.error(f"Error handling L2 book data: {e}")
+
+    def _handle_trades(self, data: dict) -> None:
+        """Handle trade data and convert to trade ticks."""
+        try:
+            from nautilus_trader.core.uuid import UUID4
+            from nautilus_trader.model.data import TradeTick
+            from nautilus_trader.model.enums import AggressorSide
+            from nautilus_trader.model.objects import Price, Quantity
+            
+            self._log.info(f"📈 Received trades data: {data}")
+            
+            if isinstance(data, list):
+                for trade_data in data:
+                    if isinstance(trade_data, dict) and all(k in trade_data for k in ["coin", "px", "sz", "side"]):
+                        coin = trade_data["coin"]
+                        price_str = trade_data["px"]
+                        size_str = trade_data["sz"]
+                        side = trade_data["side"]
+                        
+                        # Create instrument ID
+                        instrument_id = InstrumentId.from_str(f"{coin}-PERP.HYPERLIQUID")
+                        
+                        # Check if we're subscribed to this instrument
+                        if instrument_id in self._subscribed_instruments:
+                            try:
+                                price = Price.from_str(price_str)
+                                size = Quantity.from_str(size_str)
+                                aggressor_side = AggressorSide.BUYER if side.lower() == "b" else AggressorSide.SELLER
+                                
+                                from nautilus_trader.model.identifiers import TradeId
+                                
+                                trade_id = TradeId(str(trade_data.get("tid", "0")))
+                                
+                                trade_tick = TradeTick(
+                                    instrument_id=instrument_id,
+                                    price=price,
+                                    size=size,
+                                    aggressor_side=aggressor_side,
+                                    trade_id=trade_id,
+                                    ts_event=self._clock.timestamp_ns(),
+                                    ts_init=self._clock.timestamp_ns(),
+                                )
+                                
+                                self._handle_data(trade_tick)
+                                self._log.debug(f"📈 Processed trade tick for {instrument_id}: {price} x {size}")
+                                
+                            except Exception as e:
+                                self._log.error(f"Error creating trade tick for {coin}: {e}")
+            
+        except Exception as e:
+            self._log.error(f"Error handling trades data: {e}")
+
+    def _handle_generic_data(self, data: dict) -> None:
+        """Handle generic data formats."""
+        try:
+            self._log.debug(f"Received generic data: {data}")
+            # Log data structure to understand format
+            self._log.info(f"🔍 Unknown data format: {list(data.keys()) if isinstance(data, dict) else type(data)}")
+        except Exception as e:
+            self._log.error(f"Error handling generic data: {e}")
 
     def _send_all_instruments_to_data_engine(self) -> None:
         """Send all instruments to the data engine."""
@@ -218,19 +381,19 @@ class HyperliquidDataClient(LiveMarketDataClient):
 
     # -- REQUESTS ---------------------------------------------------------------------------------
 
-    async def _request_instrument(self, request: DataRequest) -> None:
+    async def _request_instrument(self, request: RequestInstrument) -> None:
         # Instruments are pre-loaded
         pass
 
-    async def _request_instruments(self, request: DataRequest) -> None:
+    async def _request_instruments(self, request: RequestInstruments) -> None:
         # Instruments are pre-loaded
         pass
 
-    async def _request_quote_ticks(self, request: DataRequest) -> None:
+    async def _request_quote_ticks(self, request: RequestQuoteTicks) -> None:
         self._log.error("Historical quote tick requests are not supported")
 
-    async def _request_trade_ticks(self, request: DataRequest) -> None:
+    async def _request_trade_ticks(self, request: RequestTradeTicks) -> None:
         self._log.error("Historical trade tick requests are not supported")
 
-    async def _request_bars(self, request: DataRequest) -> None:
+    async def _request_bars(self, request: RequestBars) -> None:
         self._log.error("Historical bar requests are not supported")

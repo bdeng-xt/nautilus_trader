@@ -35,7 +35,6 @@ def get_cached_hyperliquid_http_client(
     private_key: str | None = None,
     wallet_address: str | None = None,
     base_url: str | None = None,
-    timeout_secs: int = 60,
     testnet: bool = False,
 ) -> nautilus_pyo3.HyperliquidHttpClient:
     """
@@ -51,8 +50,6 @@ def get_cached_hyperliquid_http_client(
         The Hyperliquid wallet address.
     base_url : str, optional
         The base URL for the Hyperliquid HTTP API.
-    timeout_secs : int, default 60
-        The timeout for HTTP requests in seconds.
     testnet : bool, default False
         If client should connect to testnet.
 
@@ -62,11 +59,10 @@ def get_cached_hyperliquid_http_client(
 
     """
     return nautilus_pyo3.HyperliquidHttpClient(
-        private_key,
-        wallet_address,
-        base_url,
-        timeout_secs,
-        testnet,
+        base_url=base_url,
+        private_key=private_key,
+        wallet_address=wallet_address,
+        testnet=testnet,
     )
 
 
@@ -99,10 +95,10 @@ def get_cached_hyperliquid_websocket_client(
 
     """
     return nautilus_pyo3.HyperliquidWebSocketClient(
-        private_key,
-        wallet_address,
-        base_url,
-        testnet,
+        url=base_url,
+        private_key=private_key,
+        wallet_address=wallet_address,
+        testnet=testnet,
     )
 
 
@@ -147,7 +143,6 @@ class HyperliquidLiveDataClientFactory(LiveDataClientFactory):
             private_key=config.private_key,
             wallet_address=config.wallet_address,
             base_url=config.base_url_http,
-            timeout_secs=config.http_timeout_secs or 60,
             testnet=config.testnet,
         )
 
@@ -223,7 +218,6 @@ class HyperliquidLiveExecClientFactory(LiveExecClientFactory):
             private_key=config.private_key,
             wallet_address=config.wallet_address,
             base_url=config.base_url_http,
-            timeout_secs=config.http_timeout_secs or 60,
             testnet=config.testnet,
         )
 

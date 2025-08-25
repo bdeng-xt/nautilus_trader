@@ -228,4 +228,19 @@ impl HyperliquidHttpClient {
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
         })
     }
+
+    /// Parse instruments from universe data.
+    #[pyo3(name = "parse_instruments_pyo3")]
+    fn py_parse_instruments_pyo3<'py>(&self, py: Python<'py>, universe_json: String) -> PyResult<Bound<'py, PyAny>> {
+        use pyo3::types::PyList;
+        use pyo3_async_runtimes::tokio::future_into_py;
+        
+        let client = self.clone();
+        future_into_py(py, async move {
+            // TODO: Parse universe_json and create proper instrument definitions
+            // For now, return an empty list to avoid the async error
+            let instruments: Vec<String> = vec![];
+            Ok(instruments)
+        })
+    }
 }
