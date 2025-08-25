@@ -44,6 +44,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 nautilus-common = { workspace = true }
+rustls = { workspace = true }
 nautilus-core = { workspace = true }
 nautilus-execution = { workspace = true }
 nautilus-model = { workspace = true }
@@ -54,7 +55,7 @@ ahash = { workspace = true }
 anyhow = { workspace = true }
 async-stream = { workspace = true }
 base64 = { workspace = true }
-chrono = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
 dashmap = { workspace = true }
 derive_builder = { workspace = true }
 futures-util = { workspace = true }
@@ -78,6 +79,14 @@ tracing-subscriber = { workspace = true }  # Needed for example binaries
 ustr = { workspace = true }
 uuid = { workspace = true }
 
+# Hyperliquid-specific dependencies
+hyperliquid_rust_sdk = "0.6.0"
+hex = { workspace = true }
+k256 = "0.13"
+sha2 = "0.10"
+sha3 = "0.10"
+url = { workspace = true }
+
 [dev-dependencies]
 nautilus-testkit = { workspace = true }
 criterion = { workspace = true }
@@ -99,3 +108,11 @@ path = "bin/ws-data.rs"
 [[bin]]
 name = "hyperliquid-ws-exec"
 path = "bin/ws-exec.rs"
+
+[[example]]
+name = "websocket_example"
+path = "examples/websocket_example.rs"
+
+[[example]]
+name = "trading_example"
+path = "examples/trading_example.rs"

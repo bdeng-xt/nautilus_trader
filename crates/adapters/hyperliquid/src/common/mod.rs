@@ -12,3 +12,10 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 // -------------------------------------------------------------------------------------------------
+
+//! Common utilities and types for the Hyperliquid adapter.
+
+pub mod consts;
+pub mod credentials;
+pub mod enums;
+pub mod models;
