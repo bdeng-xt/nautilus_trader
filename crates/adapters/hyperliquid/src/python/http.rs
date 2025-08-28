@@ -232,14 +232,90 @@ impl HyperliquidHttpClient {
     /// Parse instruments from universe data.
     #[pyo3(name = "parse_instruments_pyo3")]
     fn py_parse_instruments_pyo3<'py>(&self, py: Python<'py>, universe_json: String) -> PyResult<Bound<'py, PyAny>> {
-        use pyo3::types::PyList;
         use pyo3_async_runtimes::tokio::future_into_py;
         
         let client = self.clone();
         future_into_py(py, async move {
-            // TODO: Parse universe_json and create proper instrument definitions
-            // For now, return an empty list to avoid the async error
-            let instruments: Vec<String> = vec![];
+            use nautilus_model::{
+                instruments::CryptoPerpetual,
+                identifiers::{InstrumentId, Symbol},
+                types::{Currency, Price, Quantity},
+                enums::CurrencyType,
+            };
+            use nautilus_core::UnixNanos;
+            use crate::common::{consts::HYPERLIQUID_VENUE, models::HyperliquidUniverse};
+            use rust_decimal::Decimal;
+
+            // Parse the universe JSON
+            let universe_data: HyperliquidUniverse = serde_json::from_str(&universe_json)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyValueError, _>(format!("Failed to parse universe JSON: {}", e)))?;
+
+            let mut instruments = Vec::new();
+
+            for asset in universe_data.universe {
+                // Skip instruments with invalid size decimals (precision issues)
+                if asset.sz_decimals <= 0 {
+                    continue;
+                }
+
+                // Create instrument ID
+                let symbol = Symbol::new(&format!("{}-PERP", asset.name));
+                let instrument_id = InstrumentId::new(symbol, *HYPERLIQUID_VENUE);
+
+                // Create currencies - Currency::new doesn't return a Result
+                let base_currency = Currency::new(
+                    asset.name.as_str(),
+                    8, // Standard precision for crypto
+                    0, // ISO code (not applicable for crypto)
+                    asset.name.as_str(),
+                    CurrencyType::Crypto,
+                );
+                
+                let quote_currency = Currency::USD(); // All Hyperliquid perpetuals are USD quoted
+                let settlement_currency = quote_currency;
+
+                // Create price and size increments based on asset decimals
+                let price_precision = 6u8; // Typical precision for crypto prices
+                let size_precision = asset.sz_decimals as u8;
+
+                let price_increment = Price::new(1.0 / 10_f64.powi(price_precision as i32), price_precision);
+                // Price::new doesn't return a Result either
+                let size_increment_price = Price::new(1.0 / 10_f64.powi(size_precision as i32), size_precision);
+
+                // Convert to Quantity
+                let size_increment_qty = Quantity::new(size_increment_price.as_f64(), size_precision);
+
+                // Create the CryptoPerpetual instrument
+                let instrument = CryptoPerpetual::new(
+                    instrument_id,
+                    Symbol::new(&asset.name), // raw symbol
+                    base_currency,
+                    quote_currency,
+                    settlement_currency,
+                    false, // is_inverse (Hyperliquid perpetuals are not inverse)
+                    price_precision,
+                    size_precision,
+                    price_increment,
+                    size_increment_qty,
+                    None, // multiplier (default to 1)
+                    None, // lot_size (default to 1)
+                    None, // max_quantity
+                    None, // min_quantity
+                    None, // max_notional
+                    None, // min_notional
+                    None, // max_price
+                    None, // min_price
+                    Some(Decimal::new(5, 2)), // margin_init (5%)
+                    Some(Decimal::new(3, 2)), // margin_maint (3%)
+                    Some(Decimal::ZERO),      // maker_fee (0%)
+                    Some(Decimal::new(2, 4)), // taker_fee (0.02%)
+                    UnixNanos::default(),     // ts_event
+                    UnixNanos::default(),     // ts_init
+                );
+
+                instruments.push(instrument);
+            }
+
             Ok(instruments)
         })
     }
