@@ -253,8 +253,8 @@ impl HyperliquidHttpClient {
             let mut instruments = Vec::new();
 
             for asset in universe_data.universe {
-                // Skip instruments with invalid size decimals (precision issues)
-                if asset.sz_decimals <= 0 {
+                // Skip instruments with negative size decimals (invalid)
+                if asset.sz_decimals < 0 {
                     continue;
                 }
 
@@ -279,11 +279,16 @@ impl HyperliquidHttpClient {
                 let size_precision = asset.sz_decimals as u8;
 
                 let price_increment = Price::new(1.0 / 10_f64.powi(price_precision as i32), price_precision);
-                // Price::new doesn't return a Result either
-                let size_increment_price = Price::new(1.0 / 10_f64.powi(size_precision as i32), size_precision);
-
-                // Convert to Quantity
-                let size_increment_qty = Quantity::new(size_increment_price.as_f64(), size_precision);
+                
+                // Handle size increment properly for precision 0
+                let size_increment_qty = if size_precision == 0 {
+                    // For precision 0, size increment is 1.0 (whole units)
+                    Quantity::new(1.0, 0)
+                } else {
+                    // For precision > 0, calculate fractional increment
+                    let size_increment_price = Price::new(1.0 / 10_f64.powi(size_precision as i32), size_precision);
+                    Quantity::new(size_increment_price.as_f64(), size_precision)
+                };
 
                 // Create the CryptoPerpetual instrument
                 let instrument = CryptoPerpetual::new(
