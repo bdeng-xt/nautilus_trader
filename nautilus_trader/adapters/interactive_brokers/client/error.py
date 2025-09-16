@@ -95,7 +95,9 @@ class InteractiveBrokersClientErrorMixin(BaseMixin):
 
         """
         is_warning = error_code in self.WARNING_CODES or 2100 <= error_code < 2200
-        error_string = error_string.replace("\n", " ")
+        # Be robust to non-string payloads from the IB API (some versions/cases
+        # may surface integers). Always coerce to string before sanitizing.
+        error_string = str(error_string).replace("\n", " ")
         await self._log_message(error_code, req_id, error_string, is_warning)
 
         if req_id != -1:

@@ -15,6 +15,7 @@
 
 import asyncio
 import functools
+from typing import Any
 
 from ibapi import comm
 from ibapi import decoder
@@ -163,9 +164,12 @@ class InteractiveBrokersClientConnectionMixin(BaseMixin):
         if self._eclient.connectOptions:
             v100version += f" {self._eclient.connectOptions}"
 
-        msg = comm.make_msg(v100version)
+        # Use ibapi's initial handshake helper to handle framing across versions
+        msg = comm.make_initial_msg(v100version)
         msg2 = str.encode(v100prefix, "ascii") + msg
         await asyncio.to_thread(functools.partial(self._eclient.conn.sendMsg, msg2))
+
+    # No compatibility shim needed for initial handshake; use make_initial_msg
 
     async def _receive_server_info(self) -> None:
         """
@@ -180,8 +184,8 @@ class InteractiveBrokersClientConnectionMixin(BaseMixin):
             If the server version information is not received within the allotted retries.
 
         """
-        retries_remaining = 5
-        fields: list[str] = []
+        retries_remaining = 20  # allow more time for TWS/Gateway prompts/latency
+        fields: list[bytes] = []
 
         while retries_remaining > 0:
             buf = await asyncio.to_thread(self._eclient.conn.recvMsg)
@@ -192,8 +196,8 @@ class InteractiveBrokersClientConnectionMixin(BaseMixin):
             else:
                 self._log.debug("Received empty buffer")
 
-            if len(fields) == 2:
-                self._process_server_version(fields)
+            if len(fields) >= 2:
+                self._process_server_version(fields[:2])
                 break
 
             retries_remaining -= 1
@@ -201,7 +205,7 @@ class InteractiveBrokersClientConnectionMixin(BaseMixin):
                 "Failed to receive server version information, "
                 f"retries remaining: {retries_remaining}",
             )
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
 
         if retries_remaining == 0:
             raise ConnectionError(

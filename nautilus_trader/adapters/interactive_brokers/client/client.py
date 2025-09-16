@@ -30,6 +30,8 @@ from ibapi.const import NO_VALID_ID
 from ibapi.errors import BAD_LENGTH
 from ibapi.execution import Execution
 from ibapi.utils import current_fn_name
+from ibapi.server_versions import MIN_SERVER_VER_PROTOBUF
+from ibapi.server_versions import MIN_SERVER_VER_PROTOBUF
 
 # fmt: off
 from nautilus_trader.adapters.interactive_brokers.client.account import InteractiveBrokersClientAccountMixin
@@ -630,7 +632,7 @@ class InteractiveBrokersClient(
         finally:
             self._log.debug("Internal message queue processor stopped")
 
-    async def _process_message(self, msg: str) -> bool:
+    async def _process_message(self, msg: bytes) -> bool:
         """
         Process a single message from TWS/Gateway.
 
@@ -653,15 +655,34 @@ class InteractiveBrokersClient(
 
             return False
 
-        fields: tuple[bytes] = comm.read_fields(msg)
-        self._log.debug(f"Msg received: {msg}")
-        self._log.debug(f"Msg received fields: {fields}")
+        use_raw_msg_id = self._eclient.serverVersion() >= MIN_SERVER_VER_PROTOBUF
+        msg_id: int = 0
+        fields: tuple[bytes]
 
-        # The decoder identifies the message type based on its payload (e.g., open
-        # order, process real-time ticks, etc.) and then calls the corresponding
-        # method from the EWrapper. Many of those methods are overridden in the client
-        # manager and handler classes to support custom processing required for Nautilus.
-        await asyncio.to_thread(self._eclient.decoder.interpret, fields)
+        if use_raw_msg_id:
+            if len(msg) < 4:
+                self._log.warning("Received short message without msgId header; ignoring")
+                return True
+            msg_id = int.from_bytes(msg[0:4], byteorder="big")
+            payload = msg[4:]
+            fields = comm.read_fields(payload)
+        else:
+            fields = comm.read_fields(msg)
+            if not fields:
+                self._log.debug("Empty fields in message; waiting for more data")
+                return True
+            first = fields[0]
+            try:
+                msg_id = int(first if isinstance(first, str) else first.decode("ascii"))
+            except Exception:
+                self._log.warning(f"Failed to parse msgId from fields[0]={first!r}")
+                return True
+            fields = fields[1:]
+
+        self._log.debug(f"Msg received id={msg_id}, fields={fields}")
+
+        # Delegate to ibapi decoder with explicit (fields, msgId)
+        await asyncio.to_thread(self._eclient.decoder.interpret, fields, msg_id)
 
         return True
 
@@ -729,12 +750,15 @@ class InteractiveBrokersClient(
 
     # -- EClient overrides ------------------------------------------------------------------------
 
-    def sendMsg(self, msg):
+    def sendMsg(self, msgId: int, msg: str):
         """
         Override the logging for ibapi EClient.sendMsg.
         """
-        full_msg = comm.make_msg(msg)
-        self._log.debug(f"TWS API request sent: function={current_fn_name(1)} msg={full_msg}")
+        useRawIntMsgId = self._eclient.serverVersion() >= MIN_SERVER_VER_PROTOBUF
+        full_msg = comm.make_msg(msgId, useRawIntMsgId, msg)
+        self._log.debug(
+            f"TWS API request sent: function={current_fn_name(1)} msg={full_msg}",
+        )
         self._eclient.conn.sendMsg(full_msg)
 
     def logRequest(self, fnName, fnParams):
